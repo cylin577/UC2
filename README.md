@@ -26,7 +26,7 @@ No Python or dependencies needed — just download and run.
 ### Option 2: Clone and run from source
 ```bash
 git clone https://github.com/cylin577/UC2
-cd 3DSC2
+cd UC2
 ```
 
 #### CUDA Support
