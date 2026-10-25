@@ -9,8 +9,7 @@ import yaml
 from PyQt6.QtCore import QObject, pyqtSignal
 
 DEVICE_YAML_NAME = "device.yaml"
-# shortcut: GitHub repo is still named 3DSC2; flip this path (and README links) when it is renamed.
-DEVICE_YAML_URL = "https://raw.githubusercontent.com/cylin577/3DSC2/main/device.yaml"
+DEVICE_YAML_URL = "https://raw.githubusercontent.com/cylin577/UC2/main/device.yaml"
 UPDATE_TIMEOUT_S = 5
 
 

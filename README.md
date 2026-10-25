@@ -1,5 +1,5 @@
 
-[![Build and Release](https://github.com/cylin577/3DSC2/actions/workflows/release.yml/badge.svg)](https://github.com/cylin577/3DSC2/actions/workflows/release.yml)
+[![Build and Release](https://github.com/cylin577/UC2/actions/workflows/release.yml/badge.svg)](https://github.com/cylin577/UC2/actions/workflows/release.yml)
 
 # UC2
 **U**niversal **C**apture and **C**ontrol
@@ -16,7 +16,7 @@ No capture card, no soldering.
 ## Installation
 
 ### Option 1: Grab a prebuilt binary
-Head to the [Releases](https://github.com/cylin577/3DSC2/releases) page and download the latest build for your platform:
+Head to the [Releases](https://github.com/cylin577/UC2/releases) page and download the latest build for your platform:
 - **Windows:** `UC2-windows-x64.exe`
 - **Linux x64:** `UC2-linux-x64`
 - **Linux aarch64:** `UC2-linux-aarch64`
@@ -25,7 +25,7 @@ No Python or dependencies needed — just download and run.
 
 ### Option 2: Clone and run from source
 ```bash
-git clone https://github.com/cylin577/3DSC2
+git clone https://github.com/cylin577/UC2
 cd 3DSC2
 ```
 
@@ -50,7 +50,7 @@ Search for:
 UC2C
 ```
 
-Or grab the `.3dsx` / `.cia` from the [Releases](https://github.com/cylin577/3DSC2/releases) page.
+Or grab the `.3dsx` / `.cia` from the [Releases](https://github.com/cylin577/UC2/releases) page.
 
 ## Devices
 Supported consoles are listed in `device.yaml` at the repo root — id, friendly name, screen count, screen size and aspect ratio.  
