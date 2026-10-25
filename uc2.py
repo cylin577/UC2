@@ -58,6 +58,11 @@ try:
 except ImportError:
     AIManager = None
 
+from devices import (DeviceUpdateSignals, default_device_id, device_by_id,
+                     load_devices, screen_layout, start_update_check)
+
+device_data = load_devices()
+
 _splash.showMessage("Imports complete...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignCenter, QColor("white"))
 _app.processEvents()
 
@@ -67,9 +72,8 @@ pyi_splash = None
 # Constants
 CPAD_BOUND = 0x5d0
 CPP_BOUND = 0x7f
-TOUCH_SCREEN_WIDTH = 320
-TOUCH_SCREEN_HEIGHT = 240
-TOP_TARGET = (400, 240) 
+# 3DS calibration targets — auto-calibration is 3DS-only (see calibration_client in device.yaml)
+TOP_TARGET = (400, 240)
 BOTTOM_TARGET = (320, 240)
 TICK_RATE = 0.050 # 50ms = 20Hz
 TOP_CALIB_TAG_ID = 0
@@ -131,6 +135,10 @@ class GlobalState:
     sampled_exg_mean = 80.0
     sampled_exg_std = 20.0
     show_mask = False
+
+    # Touch screen size of the active device (0 when the device has no control path)
+    touchScreenWidth = 0
+    touchScreenHeight = 0
 
     touchScreenPressed = False
     touchScreenPosition = QPoint(0, 0)
@@ -335,8 +343,8 @@ def get_packet_data():
         cppState = (y << 24) | (x << 16) | (irButtonsState << 8) | 0x81
 
     if state.touchScreenPressed:
-        max_tx = TOUCH_SCREEN_WIDTH - 1
-        max_ty = TOUCH_SCREEN_HEIGHT - 1
+        max_tx = state.touchScreenWidth - 1
+        max_ty = state.touchScreenHeight - 1
         tx = max(0, min(state.touchScreenPosition.x(), max_tx))
         ty = max(0, min(state.touchScreenPosition.y(), max_ty))
         x = int(round(0xfff * tx / max_tx))
@@ -507,7 +515,7 @@ class RemoteCamHandler(BaseHTTPRequestHandler):
             </style>
         </head>
         <body>
-            <h3 style="margin:10px;">3DSC2 Remote Cam</h3>
+            <h3 style="margin:10px;">UC2 Remote Cam</h3>
             <video id="v" autoplay playsinline muted></video>
             <button id="b">1. Start Camera</button>
             <div id="log">Status: Ready. If camera doesn't start, ensure you are using a browser that supports camera access over HTTP (like Chrome on some devices) or use a dedicated IP Cam app.</div>
@@ -777,7 +785,10 @@ class CalibrationState:
     DONE = 4
 
 class CalibrationManager:
-    def __init__(self, signals):
+    def __init__(self, signals, control_enabled=None):
+        # Callable, so switching to a no-control device mid-calibration is seen
+        # without any re-sync (auto-calibration is 3DS-only, control: true).
+        self.control_enabled = control_enabled or (lambda: True)
         self.state = CalibrationState.IDLE
         self.signals = signals
         self.timer = 0
@@ -796,6 +807,8 @@ class CalibrationManager:
         self.marker_detector = cv2.aruco.ArucoDetector(self.marker_dictionary, self.detector_params)
     
     def start(self):
+        if not self.control_enabled():
+            return
         self.state = CalibrationState.WAIT_TOP
         self.found_top = None
         self.found_bottom = None
@@ -805,6 +818,10 @@ class CalibrationManager:
         self.signals.status_update.emit("Calib: Show AprilTag 0 on Top Screen")
 
     def process(self, frame):
+        if not self.control_enabled():
+            # No-control device (e.g. Switch): calibration A/Select presses must
+            # never go out, whatever state a previous device's run left us in.
+            return None
         if self.state == CalibrationState.IDLE or self.state == CalibrationState.DONE:
             return None
 
@@ -937,24 +954,67 @@ class AppWindow(QMainWindow):
         # print("DEBUG: AppWindow init start") # Debugs removed
         super().__init__()
         self.signals = CameraSignals()
-        state.settings = QSettings("cylin_TW", "3DSC2")
+        state.settings = QSettings("cylin_TW", "UC2")
+        self.migrate_legacy_settings()
         self.setup_variables()
         self.setup_ui()
         self.gamepad_monitor = GamepadMonitor(self)
-        self.calibration_manager = CalibrationManager(self.signals)
+        self.calibration_manager = CalibrationManager(self.signals, lambda: self.control_enabled)
         self.ai_manager = None
         self.setup_connections()
         
         state.heartbeat_running = True
         self.heartbeat_thread = threading.Thread(target=self.heartbeat_loop, daemon=True)
+        self.device_update_signals = DeviceUpdateSignals()
+        self.device_update_signals.updated.connect(self.status_label.setText)
+        start_update_check(self.device_update_signals)
+
         self.heartbeat_thread.start()
+
+    def load_device(self, device_id):
+        device = device_by_id(device_data, device_id) or \
+            device_by_id(device_data, default_device_id(device_data))
+        self.device = device
+        self.device_id = device["id"]
+        self.control_enabled = bool(device.get("control"))
+        screens = device["screens"]
+        self.combined_size = screen_layout(device)
+        self.top_target = (screens[0]["width"], screens[0]["height"])
+        self.bottom_target = (screens[1]["width"], screens[1]["height"]) if len(screens) > 1 else None
+        if device.get("control"):
+            touch = screens[-1]          # 3DS: touch is the bottom screen, at (40, 240)
+            state.touchScreenWidth = touch["width"]
+            state.touchScreenHeight = touch["height"]
+            self.touch_offset = (touch["x"], touch["y"])
+        else:
+            state.touchScreenWidth = 0
+            state.touchScreenHeight = 0
+            state.touchScreenPressed = False
+            # A run started on a 3DS cannot keep its playback cursor on a
+            # no-control device: restart from 0 when we go back.
+            state.is_playing = False
+            state.current_play_idx = 0
+            self.touch_offset = (0, 0)
+        state.settings.setValue("deviceId", self.device_id)
+
+    def migrate_legacy_settings(self):
+        # shortcut: one-time import of pre-rename "3DSC2" settings; delete after the next release.
+        legacy = QSettings("cylin_TW", "3DSC2")
+        if legacy.contains("ipAddress") and not state.settings.contains("ipAddress"):
+            for key in ("ipAddress", "camUrl", "useIpCam", "invertY", "invertAB", "invertXY",
+                        "ButtonA", "ButtonB", "ButtonX", "ButtonY", "ButtonUp", "ButtonDown",
+                        "ButtonLeft", "ButtonRight", "ButtonL", "ButtonR", "ButtonSelect",
+                        "ButtonStart", "ButtonZL", "ButtonZR", "ButtonHome", "ButtonPower",
+                        "ButtonPowerLong", "ButtonT1", "ButtonT2",
+                        "touchButton1X", "touchButton1Y", "touchButton2X", "touchButton2Y"):
+                if legacy.contains(key):
+                    state.settings.setValue(key, legacy.value(key))
 
     def setup_variables(self):
         self.camera_index = 0
         self.frame_width = 2560
         self.frame_height = 1440
-        self.top_target = TOP_TARGET
-        self.bottom_target = BOTTOM_TARGET
+        self.load_device(state.settings.value("deviceId", default_device_id(device_data)))
         self.latest_frame = None
         self.last_top_frame = None
         self.last_bottom_frame = None
@@ -980,7 +1040,7 @@ class AppWindow(QMainWindow):
         state.xyInverse = state.settings.value("invertXY", False, type=bool)
 
     def setup_ui(self):
-        self.setWindowTitle("3DSC2")
+        self.setWindowTitle("UC2")
         self.setMinimumSize(600, 750)
         central = QWidget()
         self.setCentralWidget(central)
@@ -988,6 +1048,11 @@ class AppWindow(QMainWindow):
 
         cam_group = QGroupBox("Camera & Network")
         cam_layout = QFormLayout(cam_group)
+        self.device_combo = QComboBox()
+        for device in device_data["devices"]:
+            self.device_combo.addItem(device["friendly_name"], device["id"])
+        self.device_combo.setCurrentText(self.device["friendly_name"])
+        cam_layout.addRow("Device:", self.device_combo)
         self.camera_combo = QComboBox()
         self.camera_combo.addItems([f"Camera {i}" for i in range(8)])
         cam_layout.addRow("Camera:", self.camera_combo)
@@ -1000,7 +1065,8 @@ class AppWindow(QMainWindow):
         cam_layout.addRow("", self.use_ip_cam)
         
         self.ip_edit = QLineEdit(state.ipAddress)
-        cam_layout.addRow("3DS IP:", self.ip_edit)
+        self.ip_row_label = QLabel()
+        cam_layout.addRow(self.ip_row_label, self.ip_edit)
         layout.addWidget(cam_group)
 
         btn_layout = QHBoxLayout()
@@ -1074,17 +1140,29 @@ class AppWindow(QMainWindow):
 
         self.status_label = QLabel("Ready")
         layout.addWidget(self.status_label)
-        self.instr = QTextEdit(
-            "1. Set 3DS IP. 2. Start camera. 3. For auto calibration, run calibration client on 3DS and click Auto Calibrate. "
-            "4. Manual ROI selection still works by clicking 4 corners per screen."
-        )
+        self.instr = QTextEdit(self.device_instructions())
         self.instr.setReadOnly(True); self.instr.setMaximumHeight(80)
         layout.addWidget(self.instr)
-        
+
         self.fps_label = QLabel("FPS: --")
         layout.addWidget(self.fps_label)
 
         self.remap_dlg = RemapConfig(self)
+        self.apply_device_ui()
+
+    def device_instructions(self):
+        step = 1
+        parts = []
+        if self.device.get("control"):
+            parts.append(f"{step}. Set the device IP.")
+            step += 1
+        parts.append(f"{step}. Start camera. {step + 1}. Click 4 corners of every screen "
+                     f"in the ROI Selector to lock the ROIs.")
+        step += 2
+        parts.append(f"{step}. Auto Calibrate needs the calibration client running on your 3DS."
+                     if self.device.get("calibration_client") else
+                     f"{step}. Auto Calibrate is unavailable: no calibration client exists for this device.")
+        return " ".join(parts)
 
     def setup_connections(self):
         self.start_btn.clicked.connect(self.start_camera)
@@ -1095,6 +1173,7 @@ class AppWindow(QMainWindow):
         self.config_btn.clicked.connect(self.remap_dlg.show)
         self.ip_edit.textChanged.connect(self.update_ip)
         self.camera_combo.currentIndexChanged.connect(lambda: self.use_ip_cam.setChecked(False))
+        self.device_combo.currentIndexChanged.connect(self.switch_device)
         self.url_edit.textChanged.connect(lambda text: self.use_ip_cam.setChecked(True) if text.strip() else None)
         self.inv_y.stateChanged.connect(self.update_settings)
         self.inv_ab.stateChanged.connect(self.update_settings)
@@ -1191,6 +1270,30 @@ class AppWindow(QMainWindow):
         state.settings.setValue("invertAB", self.inv_ab.isChecked())
         state.settings.setValue("invertXY", self.inv_xy.isChecked())
 
+    def switch_device(self, _index):
+        self.load_device(self.device_combo.currentData())
+        self.reset_rois()                      # ROIs are device-geometry specific
+        self.hide_view_windows()               # drop the previous device's windows
+        self.top_view_window = None
+        self.bottom_view_window = None
+        self.combined_view_window = None       # recreated at the new device's sizes
+        if self.windows_created:               # camera already running: rebuild now
+            self.sync_view_windows(force=True)
+        self.apply_device_ui()
+
+    def apply_device_ui(self):
+        control = bool(self.device.get("control"))
+        client = bool(self.device.get("calibration_client"))
+        for widget in (self.config_btn, self.inv_y, self.inv_ab, self.inv_xy, self.record_btn,
+                       self.play_btn, self.save_tas_btn, self.load_tas_btn,
+                       self.ip_row_label, self.ip_edit):
+            widget.setEnabled(control)
+        self.auto_calib_btn.setEnabled(control and client)
+        self.ip_row_label.setText(f"{self.device['friendly_name']} IP:")
+        self.instr.setText(self.device_instructions())
+        self.status_label.setText(
+            "No control path: capture only" if not control else f"Device: {self.device['friendly_name']}")
+
     def start_sampling_color(self):
         self.sampling_color = True
         self.status_label.setText("Click screen area in 'ROI Selector' for fallback color sample")
@@ -1247,22 +1350,24 @@ class AppWindow(QMainWindow):
     def heartbeat_loop(self):
         next_tick = time.perf_counter()
         while state.heartbeat_running:
-            if state.is_playing:
-                if state.current_play_idx < len(state.tas_frames):
-                    frame_hex = state.tas_frames[state.current_play_idx]
-                    ba = bytes.fromhex(frame_hex)
-                    send_packet(ba)
-                    state.current_play_idx += 1
+            # No-control devices (e.g. Switch) must not map the gamepad or send anything.
+            if self.control_enabled:
+                if state.is_playing:
+                    if state.current_play_idx < len(state.tas_frames):
+                        frame_hex = state.tas_frames[state.current_play_idx]
+                        ba = bytes.fromhex(frame_hex)
+                        send_packet(ba)
+                        state.current_play_idx += 1
+                    else:
+                        state.is_playing = False
+                        send_packet(get_release_packet())
                 else:
-                    state.is_playing = False
-                    send_packet(get_release_packet())
-            else:
-                ba = get_packet_data()
-                if ba:
-                    send_packet(ba)
-                    if state.is_recording:
-                        state.tas_frames.append(ba.hex())
-            
+                    ba = get_packet_data()
+                    if ba:
+                        send_packet(ba)
+                        if state.is_recording:
+                            state.tas_frames.append(ba.hex())
+
             next_tick += TICK_RATE
             sleep_time = next_tick - time.perf_counter()
             if sleep_time > 0:
@@ -1298,12 +1403,20 @@ class AppWindow(QMainWindow):
         self.windows_created = True
 
     def ensure_view_windows(self):
+        screens = self.device["screens"]
         if self.top_view_window is None:
-            self.top_view_window = ScreenViewWindow("Top Screen", self.top_target)
-        if self.bottom_view_window is None:
-            self.bottom_view_window = ScreenViewWindow("Bottom Screen", self.bottom_target, self.handle_bottom_touch)
+            self.top_view_window = ScreenViewWindow(f'{screens[0]["name"].capitalize()} Screen', self.top_target)
+        if self.bottom_view_window is None and len(screens) > 1:
+            self.bottom_view_window = ScreenViewWindow(
+                f'{screens[1]["name"].capitalize()} Screen', self.bottom_target,
+                self.handle_bottom_touch if self.device.get("control") else None)
         if self.combined_view_window is None:
-            self.combined_view_window = ScreenViewWindow("3DS Combined", (400, 480), self.handle_combined_touch)
+            self.combined_view_window = ScreenViewWindow(
+                self.combined_window_name(), self.combined_size,
+                self.handle_combined_touch if self.device.get("control") else None)
+
+    def combined_window_name(self):
+        return f'{self.device["friendly_name"]} Combined'
 
     def sync_view_windows(self, force=False):
         mode = "combined" if self.combined_view else "split"
@@ -1315,31 +1428,39 @@ class AppWindow(QMainWindow):
             self.destroy_opencv_window("Top Screen")
             self.destroy_opencv_window("Bottom Screen")
             self.top_view_window.hide()
-            self.bottom_view_window.hide()
+            if self.bottom_view_window is not None:
+                self.bottom_view_window.hide()
             self.combined_view_window.show()
             self.combined_view_window.set_frame(self.make_combined_view())
         else:
-            self.destroy_opencv_window("3DS Combined")
+            self.destroy_opencv_window(self.combined_window_name())
             self.combined_view_window.hide()
             self.top_view_window.show()
-            self.bottom_view_window.show()
+            if self.bottom_view_window is not None:
+                self.bottom_view_window.show()
             if self.last_top_frame is not None:
                 self.top_view_window.set_frame(self.last_top_frame)
-            if self.last_bottom_frame is not None:
+            if self.bottom_view_window is not None and self.last_bottom_frame is not None:
                 self.bottom_view_window.set_frame(self.last_bottom_frame)
         cv2.waitKey(1)
         self.view_mode = mode
 
     def make_combined_view(self):
-        combined = np.full((480, 400, 3), 24, dtype=np.uint8)
-        cv2.putText(combined, "TOP", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (120, 120, 120), 2)
-        cv2.putText(combined, "BOTTOM", (52, 268), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (120, 120, 120), 2)
-        if self.last_top_frame is not None:
-            combined[0:240, 0:400] = self.last_top_frame
-        if self.last_bottom_frame is not None:
-            combined[240:480, 40:360] = self.last_bottom_frame
+        width, height = self.combined_size
+        combined = np.full((height, width, 3), 24, dtype=np.uint8)
+        screens = self.device["screens"]
+        cv2.putText(combined, screens[0]["name"].upper(), (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (120, 120, 120), 2)
+        if len(screens) > 1:
+            cv2.putText(combined, screens[1]["name"].upper(), (52, 268), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (120, 120, 120), 2)
+        frames = [self.last_top_frame, self.last_bottom_frame]
+        for i, screen in enumerate(screens):
+            frame = frames[i] if i < len(frames) else None
+            if frame is not None:
+                combined[screen["y"]:screen["y"] + screen["height"],
+                         screen["x"]:screen["x"] + screen["width"]] = frame
         if state.touchScreenPressed:
-            draw_touch = (state.touchScreenPosition.x() + 40, state.touchScreenPosition.y() + 240)
+            draw_touch = (state.touchScreenPosition.x() + self.touch_offset[0],
+                          state.touchScreenPosition.y() + self.touch_offset[1])
             cv2.circle(combined, draw_touch, 6, (0, 0, 255), -1)
         return combined
 
@@ -1356,7 +1477,7 @@ class AppWindow(QMainWindow):
 
     def mouse_roi_callback(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
-            if self.roi_locked or len(self.screens) >= 2:
+            if self.roi_locked or len(self.screens) >= len(self.device["screens"]):
                 return
 
             if self.sampling_color:
@@ -1380,14 +1501,14 @@ class AppWindow(QMainWindow):
                 self.screens.append(np.array(self.roi_points, dtype=np.float32).reshape(4, 2))
                 self.roi_points = []
                 self.signals.status_update.emit(f"ROI {len(self.screens)} selected")
-                if len(self.screens) >= 2:
+                if len(self.screens) >= len(self.device["screens"]):
                     self.roi_locked = True
                     self.lock_roi_checkbox.setChecked(True)
                     self.signals.status_update.emit("ROIs complete. Locked.")
 
     def handle_touch_event(self, action, raw_x, raw_y):
-        raw_x = max(0, min(int(raw_x), TOUCH_SCREEN_WIDTH - 1))
-        raw_y = max(0, min(int(raw_y), TOUCH_SCREEN_HEIGHT - 1))
+        raw_x = max(0, min(int(raw_x), state.touchScreenWidth - 1))
+        raw_y = max(0, min(int(raw_y), state.touchScreenHeight - 1))
 
         if action == "press":
             state.touchScreenPressed = True
@@ -1401,26 +1522,7 @@ class AppWindow(QMainWindow):
         self.handle_touch_event(action, x, y)
 
     def handle_combined_touch(self, action, x, y):
-        self.handle_touch_event(action, x - 40, y - 240)
-
-    def mouse_touch_callback(self, event, x, y, flags, param):
-        if self.combined_view:
-            canvas_x, canvas_y = window_to_image_coords(x, y, "3DS Combined", (400, 480))
-            raw_x = int(canvas_x - 40)
-            raw_y = int(canvas_y - 240)
-        else:
-            raw_x, raw_y = window_to_image_coords(x, y, "Bottom Screen", self.bottom_target)
-
-        raw_x = max(0, min(int(raw_x), TOUCH_SCREEN_WIDTH - 1))
-        raw_y = max(0, min(int(raw_y), TOUCH_SCREEN_HEIGHT - 1))
-
-        if event == cv2.EVENT_LBUTTONDOWN:
-            state.touchScreenPressed = True
-            state.touchScreenPosition = QPoint(raw_x, raw_y)
-        elif event == cv2.EVENT_MOUSEMOVE and (flags & cv2.EVENT_FLAG_LBUTTON):
-            state.touchScreenPosition = QPoint(raw_x, raw_y)
-        elif event == cv2.EVENT_LBUTTONUP:
-            state.touchScreenPressed = False
+        self.handle_touch_event(action, x - self.touch_offset[0], y - self.touch_offset[1])
 
     def get_local_ip(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1510,8 +1612,11 @@ class AppWindow(QMainWindow):
         if self.latest_frame is None:
             self.signals.error_occurred.emit("Start camera first!")
             return
+        if not self.device.get("control"):
+            self.signals.error_occurred.emit(f"No control path for {self.device['friendly_name']}")
+            return
         if not state.ipAddress:
-            self.signals.error_occurred.emit("Set 3DS IP address first!")
+            self.signals.error_occurred.emit(f"Set {self.device['friendly_name']} IP address first!")
             return
         self.roi_points.clear()
         self.signals.status_update.emit("Run calibration client on 3DS, then show tag 0 / tag 1 as prompted")
@@ -1627,7 +1732,7 @@ def main():
     app = _app
     splash = _splash
 
-    splash.showMessage("Starting 3DSC2...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignCenter, QColor("white"))
+    splash.showMessage("Starting UC2...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignCenter, QColor("white"))
     app.processEvents()
 
     print("DEBUG: QApplication created")

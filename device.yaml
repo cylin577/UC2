@@ -1,0 +1,28 @@
+# UC2 device registry. Startup code fetches this from GitHub and replaces the local copy
+# when the sha256 differs (DEVICE_YAML_URL in devices.py).
+default_device: "3ds"
+devices:
+  - id: "3ds"
+    friendly_name: "Nintendo 3DS"
+    screen_count: 2
+    calibration_client: true
+    control: true
+    screens:
+      - name: "top"
+        width: 400
+        height: 240
+        aspect_ratio: "5:3"
+      - name: "bottom"
+        width: 320
+        height: 240
+        aspect_ratio: "4:3"
+  - id: "switch"
+    friendly_name: "Nintendo Switch"
+    screen_count: 1
+    calibration_client: false
+    control: false
+    screens:
+      - name: "tv"
+        width: 1280
+        height: 720
+        aspect_ratio: "16:9"

@@ -3,11 +3,12 @@
 block_cipher = None
 
 a = Analysis(
-    ["3dsc2.py"],
+    ["uc2.py"],
     pathex=[],
     binaries=[],
     datas=[
         ('resources', 'resources'),
+        ('device.yaml', '.'),
     ],
     hiddenimports=[
         "ai_agent",
@@ -49,7 +50,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name="3DSC2",
+    name="UC2",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

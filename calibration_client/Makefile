@@ -1,14 +1,14 @@
-# 3DSC2 Calib Makefile
+# UC2 Calib Makefile
 
-TARGET		:=	3dsc2_calib
+TARGET		:=	uc2_calib
 BUILD		:=	build
 SOURCES		:=	source
 RESOURCES	:=	../resources
 
-APP_TITLE	:=	3DSC2 Calib
-APP_DESCRIPTION	:=	3DS Camera View & Control Calibration
+APP_TITLE	:=	UC2 Calib
+APP_DESCRIPTION	:=	UC2 Calibration
 APP_AUTHOR	:=	cylin577
-APP_PRODCODE:=	CTR-P-3DC2
+APP_PRODCODE:=	CTR-P-UC2C
 APP_HTID	:=	0x038B2
 
 VERSION_MAJOR	:= 0

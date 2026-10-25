@@ -18,13 +18,13 @@ jobs:
         include:
           - os: ubuntu-22.04
             arch: x64
-            artifact_name: 3DSC2-linux-x64
+            artifact_name: UC2-linux-x64
           - os: windows-latest
             arch: x64
-            artifact_name: 3DSC2-windows-x64.exe
+            artifact_name: UC2-windows-x64.exe
           - os: ubuntu-22.04-arm
             arch: aarch64
-            artifact_name: 3DSC2-linux-aarch64
+            artifact_name: UC2-linux-aarch64
 
     steps:
       - name: Checkout code
@@ -53,15 +53,15 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Build with PyInstaller
-        run: uv run pyinstaller --noconfirm 3dsc2.spec
+        run: uv run pyinstaller --noconfirm uc2.spec
 
       - name: Rename Artifact
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
-            mv dist/3DSC2.exe dist/${{ matrix.artifact_name }}
+            mv dist/UC2.exe dist/${{ matrix.artifact_name }}
           else
-            mv dist/3DSC2 dist/${{ matrix.artifact_name }}
+            mv dist/UC2 dist/${{ matrix.artifact_name }}
           fi
 
       - name: Upload Artifact
@@ -71,7 +71,7 @@ jobs:
           path: dist/${{ matrix.artifact_name }}
 
   build-3ds:
-    name: Build 3DS Calibration Client
+    name: Build UC2 Calibration Client
     runs-on: ubuntu-latest
     container:
       image: devkitpro/devkitarm:latest
@@ -100,13 +100,13 @@ jobs:
       - name: Upload 3DSX Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 3DSC2-calibration-client.3dsx
+          name: UC2-calibration-client.3dsx
           path: calibration_client/*.3dsx
 
       - name: Upload CIA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 3DSC2-calibration-client.cia
+          name: UC2-calibration-client.cia
           path: calibration_client/*.cia
 
   release:

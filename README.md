@@ -1,8 +1,8 @@
 
 [![Build and Release](https://github.com/cylin577/3DSC2/actions/workflows/release.yml/badge.svg)](https://github.com/cylin577/3DSC2/actions/workflows/release.yml)
 
-# 3DSC2
-**3DS** **C**apture and **C**ontrol
+# UC2
+**U**niversal **C**apture and **C**ontrol
 
 Capture AND Control your 3DS — no expensive AF hardware
 ## Why?
@@ -10,16 +10,16 @@ I’ve got an O3DS LL, and I wanted to stream its screens to my computer —
 but that’s something only ~~Apple~~ the *New 3DS* can do.  
 So I made this!  
 
-3DSC2 lets you stream and control **any 3DS**, using just a camera.  
+UC2 lets you stream and control **any 3DS**, using just a camera.  
 No capture card, no soldering.
 
 ## Installation
 
 ### Option 1: Grab a prebuilt binary
 Head to the [Releases](https://github.com/cylin577/3DSC2/releases) page and download the latest build for your platform:
-- **Windows:** `3DSC2-windows-x64.exe`
-- **Linux x64:** `3DSC2-linux-x64`
-- **Linux aarch64:** `3DSC2-linux-aarch64`
+- **Windows:** `UC2-windows-x64.exe`
+- **Linux x64:** `UC2-linux-x64`
+- **Linux aarch64:** `UC2-linux-aarch64`
 
 No Python or dependencies needed — just download and run.
 
@@ -42,15 +42,21 @@ cp pyproject.cpu.toml pyproject.toml
 uv sync --all-extras
 ```
 
-### Installing 3DSC2C (3DS)
+### Installing UC2C (3DS)
 You can install the calibration companion app directly from Universal-Updater.
 
 Search for:
 ```text
-3DSC2C
+UC2C
 ```
 
 Or grab the `.3dsx` / `.cia` from the [Releases](https://github.com/cylin577/3DSC2/releases) page.
+
+## Devices
+Supported consoles are listed in `device.yaml` at the repo root — id, friendly name, screen count, screen size and aspect ratio.  
+On startup the app checks GitHub and replaces your local `device.yaml` when the sha256 differs (applies on next start).  
+A **Nintendo Switch** works for capture, ROI and AI only — no control path and no calibration client.  
+The **3DS** stays the only device with control and auto-calibration.
 
 ## How to use
 Here’s all you need to get started:
@@ -65,21 +71,21 @@ This project uses **uv** for seamless dependency management.
 
 1. Run the application
    ```bash
-   uv run 3dsc2.py
+   uv run uc2.py
    ```
    *Note: `uv` will automatically handle all dependencies including OpenCV, PyQt6, and Pygame.*
 
 2. Build a standalone executable (optional)
    ```bash
-   uv run pyinstaller 3dsc2.spec
+   uv run pyinstaller uc2.spec
    ```
-   The PyInstaller build uses `resources/splash.png` as the splash image and writes the executable to `dist/3DSC2`.
+   The PyInstaller build uses `resources/splash.png` as the splash image and writes the executable to `dist/UC2`.
 
 3. Setup & Calibration
    - Enter your **3DS IP Address**.
    - Select your camera from the dropdown and click **Start Camera**.
    - **Auto Calibration (Recommended):**
-     1. Run the `3dsc2_calib` homebrew app on your 3DS.
+     1. Run the `uc2_calib` homebrew app on your 3DS.
      2. Click **Auto Calibrate** in the PC app.
      3. Follow the instructions: Show **AprilTag 0** on the Top Screen, then press `A` on the 3DS to show **AprilTag 1** on the Bottom Screen.
      4. The app will automatically detect and lock the ROIs.

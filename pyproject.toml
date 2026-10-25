@@ -1,12 +1,13 @@
 [project]
-name = "3dsc2"
+name = "uc2"
 version = "0.1.0"
-description = "3DS Camera View & Control (TAS & Event Replay)"
+description = "UC2 (TAS & Event Replay)"
 requires-python = ">=3.10"
 dependencies = [
     "opencv-python",
     "pyqt6==6.7.1",
     "numpy",
+    "pyyaml",
     "pygame",
     "torch>=2.9.1",
     "torchvision>=0.24.1",
