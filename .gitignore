@@ -11,7 +11,7 @@ dist/
 # 3DS / C Build Artifacts
 calibration_client/build/
 remote_build/
-remote_build.sh
+!remote_build.sh
 *.3dsx
 *.elf
 *.cia

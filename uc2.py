@@ -60,6 +60,7 @@ except ImportError:
 
 from devices import (DeviceUpdateSignals, default_device_id, device_by_id,
                      load_devices, screen_layout, start_update_check)
+from remote_control import get_release_packet, make_backend
 
 device_data = load_devices()
 
@@ -150,7 +151,7 @@ class GlobalState:
     tas_frames = [] 
     current_play_idx = 0
     
-    udp_socket = None
+    # The UDP socket lives in the active remote-control backend (remote_control.py).
     heartbeat_running = False
 
 state = GlobalState()
@@ -352,18 +353,6 @@ def get_packet_data():
         touchScreenState = (1 << 24) | (y << 12) | x
 
     return struct.pack('<IIIII', hidPad, touchScreenState, circlePadState, cppState, state.interfaceButtons)
-
-def get_release_packet():
-    return struct.pack('<IIIII', 0xfff, 0x2000000, 0x7ff7ff, 0x80800081, 0)
-
-def send_packet(ba):
-    if state.ipAddress:
-        if state.udp_socket is None:
-            state.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            state.udp_socket.sendto(ba, (state.ipAddress, 4950))
-        except:
-            pass
 
 class GamepadMonitor(QObject):
     def __init__(self, parent=None):
@@ -785,10 +774,12 @@ class CalibrationState:
     DONE = 4
 
 class CalibrationManager:
-    def __init__(self, signals, control_enabled=None):
+    def __init__(self, signals, backend, control_enabled=None):
         # Callable, so switching to a no-control device mid-calibration is seen
         # without any re-sync (auto-calibration is 3DS-only, control: true).
         self.control_enabled = control_enabled or (lambda: True)
+        # Who the A/Select presses go through (3DS UDP, or the null backend).
+        self.backend = backend
         self.state = CalibrationState.IDLE
         self.signals = signals
         self.timer = 0
@@ -833,7 +824,7 @@ class CalibrationManager:
                 if self.check_stability(rect):
                     self.found_top = rect
                     self.signals.status_update.emit("Top Found! Sending Input...")
-                    self.send_a_press()
+                    self.backend.send_a_press()
                     self.timer = current_time
                     self.state = CalibrationState.WAIT_TRANSITION_1
                     self.reset_stability()
@@ -854,7 +845,7 @@ class CalibrationManager:
                     if self.check_stability(rect):
                         self.found_bottom = rect
                         self.signals.status_update.emit("Bottom Found! Finishing...")
-                        self.send_select_press()
+                        self.backend.send_select_press()
                         self.state = CalibrationState.DONE
                         self.reset_stability()
                         return [self.found_top, self.found_bottom]
@@ -928,27 +919,6 @@ class CalibrationManager:
         dist = np.linalg.norm(c1 - c2)
         return dist < 50 # If centers are close, assume same screen
 
-    def send_a_press(self):
-        # Send A press
-        # HID format: <IIIII
-        # hidPad (0xFFF default). A is bit 0. Clear bit 0 to press.
-        packet_press = struct.pack('<IIIII', 0xffe, 0x2000000, 0x7ff7ff, 0x80800081, 0)
-        send_packet(packet_press)
-        
-        # Schedule release after 100ms
-        time.sleep(0.1)
-        send_packet(get_release_packet())
-
-    def send_select_press(self):
-        # Send Select press
-        # Select is Bit 2 (1 << 2 = 4)
-        # 0xFFF & ~4 = 0xFFB
-        packet_press = struct.pack('<IIIII', 0xffb, 0x2000000, 0x7ff7ff, 0x80800081, 0)
-        send_packet(packet_press)
-        
-        time.sleep(0.1)
-        send_packet(get_release_packet())
-
 class AppWindow(QMainWindow):
     def __init__(self):
         # print("DEBUG: AppWindow init start") # Debugs removed
@@ -959,7 +929,8 @@ class AppWindow(QMainWindow):
         self.setup_variables()
         self.setup_ui()
         self.gamepad_monitor = GamepadMonitor(self)
-        self.calibration_manager = CalibrationManager(self.signals, lambda: self.control_enabled)
+        self.calibration_manager = CalibrationManager(self.signals, self.remote_backend,
+                                                       lambda: self.control_enabled)
         self.ai_manager = None
         self.setup_connections()
         
@@ -977,6 +948,11 @@ class AppWindow(QMainWindow):
         self.device = device
         self.device_id = device["id"]
         self.control_enabled = bool(device.get("control"))
+        self.remote_backend = make_backend(self.device, state)
+        if hasattr(self, "calibration_manager"):
+            # A calibration started before a device switch keeps driving the new
+            # device's transport (see the control_enabled callable above).
+            self.calibration_manager.backend = self.remote_backend
         screens = device["screens"]
         self.combined_size = screen_layout(device)
         self.top_target = (screens[0]["width"], screens[0]["height"])
@@ -1344,7 +1320,7 @@ class AppWindow(QMainWindow):
         else:
             state.is_playing = False
             self.play_btn.setText("Play")
-            send_packet(get_release_packet()) 
+            self.remote_backend.send_packet(get_release_packet())
             self.signals.status_update.emit("Playback stopped")
 
     def heartbeat_loop(self):
@@ -1356,15 +1332,15 @@ class AppWindow(QMainWindow):
                     if state.current_play_idx < len(state.tas_frames):
                         frame_hex = state.tas_frames[state.current_play_idx]
                         ba = bytes.fromhex(frame_hex)
-                        send_packet(ba)
+                        self.remote_backend.send_packet(ba)
                         state.current_play_idx += 1
                     else:
                         state.is_playing = False
-                        send_packet(get_release_packet())
+                        self.remote_backend.send_packet(get_release_packet())
                 else:
                     ba = get_packet_data()
                     if ba:
-                        send_packet(ba)
+                        self.remote_backend.send_packet(ba)
                         if state.is_recording:
                             state.tas_frames.append(ba.hex())
 

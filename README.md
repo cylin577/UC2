@@ -107,3 +107,5 @@ That’s it !
 
 ## Contribute
 If you found this project useful, please star this repo! If you can code, feel free to help with the TODOs or suggest new features via Pull Requests.
+
+Adding a device, writing your own calibration client, or a new remote-control backend? See [docs/adding-devices.md](docs/adding-devices.md).
