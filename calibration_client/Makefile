@@ -11,8 +11,8 @@ APP_AUTHOR	:=	cylin577
 APP_PRODCODE:=	CTR-P-UC2C
 APP_HTID	:=	0x038B2
 
-VERSION_MAJOR	:= 0
-VERSION_MINOR	:= 1
+VERSION_MAJOR	:= 2
+VERSION_MINOR	:= 0
 VERSION_PATCH	:= 0
 
 #---------------------------------------------------------------------------------
